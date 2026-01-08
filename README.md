@@ -5,3 +5,4 @@ nix develop github:littledivy/code2pdf#default
 python code2pdf.py
 ```
 
+ Universities have a PDF fetish istg
