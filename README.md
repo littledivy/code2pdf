@@ -1,4 +1,4 @@
-Combile a C++ project into a single PDF file.
+Combine a C++ project into a single PDF file.
 
 ```sh
 nix develop github:littledivy/code2pdf#default
