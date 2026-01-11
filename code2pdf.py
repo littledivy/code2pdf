@@ -2,6 +2,7 @@
 
 import os
 import glob
+import argparse
 from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -10,11 +11,44 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.colors import HexColor
 from pygments import lex
-from pygments.lexers import CppLexer
+from pygments.lexers import CppLexer, JavascriptLexer, PythonLexer, get_lexer_by_name
 from pygments.token import Token
 from datetime import datetime
 
-def get_code_files(base_path):
+def detect_project_type(base_path):
+    """Detect the type of project based on files present."""
+    if os.path.exists(os.path.join(base_path, 'package.json')):
+        return 'nodejs'
+    elif os.path.exists(os.path.join(base_path, 'include')) or os.path.exists(os.path.join(base_path, 'src')):
+        return 'cpp'
+    return 'generic'
+
+def get_nodejs_files(base_path):
+    """Get all Node.js/Express project files, excluding common directories."""
+    excluded_dirs = {'node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.vscode', '.idea', '__pycache__'}
+    excluded_files = {'package-lock.json', 'main.css', 'output.css', 'styles.css'}
+    file_extensions = {'.js', '.ejs', '.json', '.ts', '.jsx', '.tsx', '.css', '.html', '.sql'}
+
+    code_files = []
+
+    for root, dirs, files in os.walk(base_path):
+        # Remove excluded directories from the search
+        dirs[:] = [d for d in dirs if d not in excluded_dirs]
+
+        for file in sorted(files):
+            # Skip excluded files
+            if file in excluded_files:
+                continue
+
+            file_path = os.path.join(root, file)
+            _, ext = os.path.splitext(file)
+
+            if ext in file_extensions:
+                code_files.append(file_path)
+
+    return sorted(code_files)
+
+def get_cpp_files(base_path):
     """Get all C++ source and header files, excluding build directory."""
     cpp_files = []
     h_files = []
@@ -34,12 +68,51 @@ def get_code_files(base_path):
     # Combine: headers first, then source files
     return h_files + cpp_files
 
-def syntax_highlight_line(line_content, line_num):
-    """Apply syntax highlighting to a single line of C++ code."""
+def get_code_files(base_path, project_type=None):
+    """Get all code files based on project type."""
+    if project_type is None:
+        project_type = detect_project_type(base_path)
+
+    if project_type == 'nodejs':
+        return get_nodejs_files(base_path)
+    elif project_type == 'cpp':
+        return get_cpp_files(base_path)
+    else:
+        return get_nodejs_files(base_path)  # Default to generic file collection
+
+def get_lexer_for_file(file_path):
+    """Get the appropriate Pygments lexer for a file based on its extension."""
+    _, ext = os.path.splitext(file_path)
+    ext = ext.lower()
+
+    lexer_map = {
+        '.js': 'javascript',
+        '.jsx': 'jsx',
+        '.ts': 'typescript',
+        '.tsx': 'tsx',
+        '.ejs': 'html+javascript',
+        '.json': 'json',
+        '.html': 'html',
+        '.css': 'css',
+        '.cpp': 'cpp',
+        '.h': 'cpp',
+        '.py': 'python',
+        '.sql': 'sql',
+    }
+
+    try:
+        lexer_name = lexer_map.get(ext, 'text')
+        return get_lexer_by_name(lexer_name)
+    except:
+        return get_lexer_by_name('text')
+
+def syntax_highlight_line(line_content, line_num, lexer):
+    """Apply syntax highlighting to a single line of code."""
     # Color scheme for different token types
     token_colors = {
         Token.Keyword: '#0000FF',           # Blue for keywords
         Token.Keyword.Type: '#0000FF',      # Blue for types
+        Token.Keyword.Constant: '#0000FF',  # Blue for constants
         Token.Comment: '#008000',           # Green for comments
         Token.Comment.Single: '#008000',
         Token.Comment.Multiline: '#008000',
@@ -49,6 +122,7 @@ def syntax_highlight_line(line_content, line_num):
         Token.Number: '#098658',            # Teal for numbers
         Token.Name.Class: '#267F99',        # Teal for class names
         Token.Name.Function: '#795E26',     # Brown for functions
+        Token.Name.Builtin: '#0000FF',      # Blue for built-ins
         Token.Operator: '#000000',          # Black for operators
         Token.Punctuation: '#000000',       # Black for punctuation
     }
@@ -62,7 +136,6 @@ def syntax_highlight_line(line_content, line_num):
                     return parent_color
         return color
 
-    lexer = CppLexer()
     tokens = list(lex(line_content, lexer))
 
     # Build the highlighted line with proper escaping
@@ -83,18 +156,31 @@ def syntax_highlight_line(line_content, line_num):
     # Add line number in gray
     return f'<font color="#808080">{line_num:4d}</font>  {highlighted_code}'
 
-def create_pdf(output_filename='code_submission.pdf'):
+def create_pdf(base_path=None, output_filename='code_submission.pdf'):
     """Create PDF with all code files."""
-    base_path = os.path.dirname(os.path.abspath(__file__))
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    base_path = os.path.abspath(os.path.expanduser(base_path))
+
+    if not os.path.exists(base_path):
+        print(f"Error: Path '{base_path}' does not exist!")
+        return
+
+    project_type = detect_project_type(base_path)
+    print(f"Detected project type: {project_type}")
 
     # Get all files
-    files = get_code_files(base_path)
+    files = get_code_files(base_path, project_type)
 
     if not files:
-        print("No C++ or header files found!")
+        print("No code files found!")
         return
 
     print(f"Found {len(files)} files to include in PDF")
+
+    # Create project name from directory name
+    project_name = os.path.basename(base_path)
 
     # Create PDF
     doc = SimpleDocTemplate(
@@ -150,20 +236,20 @@ def create_pdf(output_filename='code_submission.pdf'):
     )
 
     # Add table of contents
-    elements.append(Paragraph("Table of Contents", title_style))
+    elements.append(Paragraph(f"Table of Contents - {project_name}", title_style))
     elements.append(Spacer(1, 0.2*inch))
 
     # Group files by directory
-    include_files = []
-    src_files = []
+    from collections import defaultdict
+    dir_files = defaultdict(list)
     file_index = 1
 
     for file_path in files:
         filename = os.path.basename(file_path)
-        if 'include' in file_path:
-            include_files.append((file_index, filename))
-        else:
-            src_files.append((file_index, filename))
+        relative_dir = os.path.dirname(os.path.relpath(file_path, base_path))
+        if relative_dir == '':
+            relative_dir = '.'
+        dir_files[relative_dir].append((file_index, filename))
         file_index += 1
 
     # Create tree-style TOC
@@ -185,18 +271,14 @@ def create_pdf(output_filename='code_submission.pdf'):
         spaceAfter=4
     )
 
-    if include_files:
-        elements.append(Paragraph("include/", toc_dir_style))
-        for i, (idx, filename) in enumerate(include_files):
-            prefix = "`--" if i == len(include_files) - 1 else "|--"
+    # Sort directories
+    for dir_name in sorted(dir_files.keys()):
+        elements.append(Paragraph(f"{dir_name}/", toc_dir_style))
+        files_in_dir = dir_files[dir_name]
+        for i, (idx, filename) in enumerate(files_in_dir):
+            prefix = "`--" if i == len(files_in_dir) - 1 else "|--"
             elements.append(Paragraph(f"{prefix} {idx}. {filename}", toc_file_style))
         elements.append(Spacer(1, 0.1*inch))
-
-    if src_files:
-        elements.append(Paragraph("src/", toc_dir_style))
-        for i, (idx, filename) in enumerate(src_files):
-            prefix = "`--" if i == len(src_files) - 1 else "|--"
-            elements.append(Paragraph(f"{prefix} {idx}. {filename}", toc_file_style))
 
     elements.append(PageBreak())
 
@@ -212,6 +294,9 @@ def create_pdf(output_filename='code_submission.pdf'):
         elements.append(Paragraph(f"<i>Path: {relative_path}</i>", styles['Italic']))
         elements.append(Spacer(1, 0.15*inch))
 
+        # Get appropriate lexer for this file
+        lexer = get_lexer_for_file(file_path)
+
         # Read and add file content
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -223,7 +308,7 @@ def create_pdf(output_filename='code_submission.pdf'):
                 line_content = line.rstrip('\n')
 
                 # Apply syntax highlighting
-                highlighted_line = syntax_highlight_line(line_content, line_num)
+                highlighted_line = syntax_highlight_line(line_content, line_num, lexer)
 
                 # Add as paragraph (automatically handles page breaks)
                 elements.append(Paragraph(highlighted_line, code_style))
@@ -241,4 +326,10 @@ def create_pdf(output_filename='code_submission.pdf'):
     print(f"PDF created successfully: {output_filename}")
 
 if __name__ == '__main__':
-    create_pdf()
+    parser = argparse.ArgumentParser(description='Convert code projects to PDF')
+    parser.add_argument('path', nargs='?', default=None, help='Path to the project directory')
+    parser.add_argument('-o', '--output', default='code_submission.pdf', help='Output PDF filename')
+
+    args = parser.parse_args()
+
+    create_pdf(base_path=args.path, output_filename=args.output)
